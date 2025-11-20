@@ -113,101 +113,6 @@ def enumerate_columns(df, column_name):
     
     return df
 
-# def sliding_xgb_window_eval(df, target_col, window_size, step, test_frac=0.2,
-#                             error_threshold=20.0, xgb_params=None, random_state=42,
-#                             min_test_samples=2, show_progress=False):
-#     """
-#     Slide a fixed-size window over df, train XGBRegressor on the first (1-test_frac)
-#     fraction and test on the last test_frac fraction. For each window compute the
-#     percentage of test rows whose percentage error <= error_threshold.
-
-#     Returns a DataFrame with columns:
-#     window_idx, start, end, n_test, pct_under_threshold
-#     """
-#     import math
-#     from tqdm import tqdm
-#     from xgboost import XGBRegressor, XGBClassifier
-
-#     if xgb_params is None:
-#         xgb_params = {'n_estimators': 100, 'random_state': random_state, 'verbosity': 0}
-
-#     results = []
-#     n = len(df)
-#     if window_size > n:
-#         window_size = n
-#         print("window_size larger than dataframe length. Setting one windw")
-
-#     indices = range(0, n - window_size + 1, step)
-#     iterator = tqdm(indices) if show_progress else indices
-#     wi = 0
-#     RESULTS_DETAILED_DF = {}            # Holds the detailed results for each window for results CSV purposes. Keys are the start index,
-#                                         # and the content is a list of [[y_test], [y_pred]]
-
-#     print('Training and predicting for sliding windows...')
-#     for start in tqdm(iterator):
-#         end = start + window_size  # exclusive
-#         window = df.iloc[start:end].copy()
-
-#         # drop rows missing target
-#         window = window.dropna(subset=[target_col])
-#         if len(window) < 2:
-#             continue
-
-#         # prepare features (dummies on full window to keep alignment)
-#         X_all = pd.get_dummies(window.drop(columns=[target_col]), drop_first=True)
-#         y_all = window[target_col].astype(float).values
-#         # y_all = window[target_col].astype(int).values
-
-#         split_idx = int(math.floor((1.0 - test_frac) * len(window)))
-#         # ensure at least min_test_samples in test
-#         if len(window) - split_idx < min_test_samples or split_idx < 1:
-#             # skip window too small
-#             continue
-
-#         X_train = X_all.iloc[:split_idx, :].values
-#         y_train = y_all[:split_idx]
-#         X_test = X_all.iloc[split_idx:, :].values
-#         y_test = y_all[split_idx:]
-
-#         # train
-#         model = XGBRegressor(**xgb_params)
-#         # model = XGBClassifier(**xgb_params)
-#         # try:
-#         #     model.fit(X_train, y_train)   
-#         # except Exception as e:
-#         #     pass
-#         model.fit(X_train, y_train)
-#         y_pred = model.predict(X_test)
-
-#         # model, y_test, y_pred = train_and_test_xgboost(window, target_col, test_size, RegressionORPrediction=1, random_state=42)
-
-#         # compute percent error safely:
-#         abs_diff = np.abs(y_test - y_pred)
-#         # If true value is zero, define percent error as 0 if prediction equals, else 100.
-#         pct_err = np.where(
-#             np.isclose(y_test, 0.0),
-#             np.where(np.isclose(abs_diff, 0.0), 0.0, 100.0),
-#             100.0 * abs_diff / np.abs(y_test)
-#         )
-
-#         RESULTS_DETAILED_DF[start] = [y_test, y_pred, start + np.arange(split_idx, split_idx+len(y_test))]
-
-#         pct_under = 100.0 * float(np.sum(pct_err <= error_threshold)) / len(pct_err)
-
-#         results.append({
-#             'window_idx': wi,
-#             'start': start,
-#             'end': end,
-#             'n_test': len(pct_err),
-#             'pct_under_threshold': pct_under
-#         })
-
-#         wi += 1
-
-#     print('DONE.')
-
-#     return pd.DataFrame(results).sort_values('window_idx').reset_index(drop=True), y_test, y_pred, RESULTS_DETAILED_DF
-
 def Analyze_RAW_Windows_Results(DATA, RESULTS_DETAILED_DICT):
     # This function takes the RESULTS_DETAILED_DF yielded by the sliding_xgb_window_eval function and contains the the results y_test-y_pred
     # and generates a DataFrame that contains pickup date (retrieved by iloc index from DATA) and the results of the prediction vs. GT.
@@ -243,33 +148,6 @@ def Analyze_RAW_Windows_Results(DATA, RESULTS_DETAILED_DICT):
 
     return RESULTS_DETAILED_DF_REFINED
         
-def extract_datetimes_from_filenames(filenames):
-    """
-    Extracts datetime objects from filenames of the form 'Latest_Test_<DATE>'.
-    Supports formats like YYYY-MM-DD, YYYYMMDD, or YYYY_MM_DD.
-    """
-    datetimes = []
-
-    for name in filenames:
-        # Try to find the date pattern
-        match = re.search(r'(\d{4}[-_]\d{2}[-_]\d{2}|\d{8})', name)
-        if match:
-            date_str = match.group(1)
-            
-            # Normalize formats like YYYY_MM_DD → YYYY-MM-DD
-            date_str = date_str.replace("_", "-")
-            
-            # Try multiple possible formats
-            for fmt in ("%Y-%m-%d", "%Y%m%d"):
-                try:
-                    dt = datetime.strptime(date_str, fmt)
-                    datetimes.append(dt)
-                    break
-                except ValueError:
-                    continue
-
-    return datetimes
-
 def set_thick_outside_borders(table, size=12, color="000000"):
     """
     Apply thick borders to the outside of a table.
@@ -351,7 +229,8 @@ def Add_File_Results_2_ACCUM_Results_File(Results_File_ACCUM_DF, Results_DF):
 
 #region GENERAL PARAMETERS
 
-Target_Folder = '/Users/avner/flexivan/Daily prediction/DATA'
+# Target_Folder = '/Users/avner/flexivan/Daily prediction/DATA'
+Target_Folder = '/root/Flexivan/Flexivan/Daily prediction/DATA'
 Sorting_Field='CHS Pickup Date'
 Error_Threshold = 20
 Predicted_Column = 'Return Time Difference'
@@ -369,7 +248,7 @@ FILENAMES = [f for f in os.listdir(Target_Folder) if os.path.isfile(os.path.join
 selected = "Latest_Test_"
 selected2 = '_DETAILED'
 FILENAMES = [f for f in FILENAMES if selected in f and selected2 not in f]
-DATES = extract_datetimes_from_filenames(FILENAMES)
+DATES = Flexivan_Prediction_Package.extract_datetimes_from_filenames(FILENAMES)
 Filenames_DF = pd.DataFrame({
     "Filenames": FILENAMES,
     "Dates": DATES
@@ -416,12 +295,13 @@ Results_File_ACCUM_DF = None
 for filename in tqdm(FILENAMES):
     try:
         doc.add_heading(f"Results for {filename}", level=3)
+
+        File_Analysis_Results_OBJ = Flexivan_Prediction_Package.File_Analysis_Reults(f'{Target_Folder}/{filename}', Sorting_Field, Columns_2_Drop_From_Training)
     
-        Results_DF, DATA_ORIG, DATA, Analysis_Info_DICT, y_test, y_pred, RESULTS_DETAILS_DF, RESULTS_DETAILS_DF_LOT = Flexivan_Prediction_Package.Analyze_Data_File(f'{Target_Folder}/{filename}', Columns_2_Drop_From_Training, Window_Size, Window_Step_Size, 
-                                                                            Error_THR, Test_Portion, Sorting_Field)
+        File_Analysis_Results_OBJ.Analyze_Data_File(f'{Target_Folder}/{filename}', Columns_2_Drop_From_Training, Window_Size, Window_Step_Size, Error_THR, Test_Portion, Sorting_Field)
         
         # Handle the adding of the ACCUM predictions to the main results file (daily file)
-        Results_File_ACCUM_DF = Flexivan_Prediction_Package.Add_File_Results_2_ACCUM_Results_DF(DATA_ORIG, Results_File_ACCUM_DF, RESULTS_DETAILS_DF)
+        Results_File_ACCUM_DF = Flexivan_Prediction_Package.Add_File_Results_2_ACCUM_Results_DF(File_Analysis_Results_OBJ.DATA_ORIG, Results_File_ACCUM_DF, File_Analysis_Results_OBJ.Return_DIFF_RESULTS_DETAILED_DICT)
 
         Results_File_ACCUM_DF = Results_File_ACCUM_DF.sort_values(by="Date")  # ascending order by default
         Results_File_ACCUM_DF.to_csv('Returns_Pickups_ACCUM_Report.csv')
@@ -429,10 +309,10 @@ for filename in tqdm(FILENAMES):
         # Save prediction results to CSV
         name, ext = os.path.splitext(filename)
         print('Saving detailed results into CSV...', end='')
-        RESULTS_DETAILS_DF.to_csv(f'{Target_Folder}/{name}_DETAILED_PREDICTION_RESULTS.{ext}')
+        File_Analysis_Results_OBJ.Return_DIFF_RESULTS_DF.to_csv(f'{Target_Folder}/{name}_DETAILED_PREDICTION_RESULTS.{ext}')
         print('DONE.')
 
-        doc.add_paragraph(f"Lines used:\t{Analysis_Info_DICT['Rows_After_Cleaning']} out of {Analysis_Info_DICT['Total_Lines']} ({int(100*Analysis_Info_DICT['Rows_After_Cleaning']/Analysis_Info_DICT['Total_Lines'])}%)")
+        doc.add_paragraph(f"Lines used:\t{self.Analysis_Info_DICT['Rows_After_Cleaning']} out of {Analysis_Info_DICT['Total_Lines']} ({int(100*Analysis_Info_DICT['Rows_After_Cleaning']/Analysis_Info_DICT['Total_Lines'])}%)")
         doc.add_paragraph(f'Data sorted by:\t{Sorting_Field}')
 
         Results_Under_Error_THR[filename] = np.average(np.array(Results_DF['pct_under_threshold']))
@@ -443,13 +323,13 @@ for filename in tqdm(FILENAMES):
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
         # --- Left plot ---
-        axes[0].plot(Results_DF['start'], Results_DF['pct_under_threshold'], linewidth=2)
+        axes[0].plot(File_Analysis_Results_OBJ.Return_DIFF_RESULTS_DF['start'], File_Analysis_Results_OBJ.Return_DIFF_RESULTS_DF['pct_under_threshold'], linewidth=2)
 
         # Custom x-axis labels
         X_Indexes = axes[0].get_xticks()
         X_Labels = [
-            datetime.strftime(DATA_ORIG.iloc[int(x)][Sorting_Field], '%Y-%m-%d') 
-            if x < len(DATA_ORIG) else '' 
+            datetime.strftime(File_Analysis_Results_OBJ.DATA_ORIG.iloc[int(x)][Sorting_Field], '%Y-%m-%d') 
+            if x < len(File_Analysis_Results_OBJ.DATA_ORIG) else '' 
             for x in X_Indexes
         ]
         axes[0].set_xticks(X_Indexes)
@@ -465,7 +345,7 @@ for filename in tqdm(FILENAMES):
 
         # --- Right plot ---
         # Assuming Display_CDF returns (CDF, ax) — pass axes[1] to it
-        CDF, _ = Display_CDF(Results_DF['pct_under_threshold'].sort_values(), axes[1])
+        CDF, _ = Display_CDF(File_Analysis_Results_OBJ.Return_DIFF_RESULTS_DF['pct_under_threshold'].sort_values(), axes[1])
 
         axes[1].set_xlabel(f'Percentage Under {Error_Threshold}% \nError Threshold[%]', fontweight='bold', fontsize=12)
         axes[1].set_ylabel('Percentage [%]', fontweight='bold', fontsize=12)
@@ -483,8 +363,8 @@ for filename in tqdm(FILENAMES):
         plt.close(fig)
 
         #endregion
-    except:
-        print(Fore.RED + f'{filename} failed analysis' + Fore.RESET)
+    except Exception as e:
+        print(Fore.RED + f'Exception: {e}' + Fore.RESET)
         FAiled_Filenames.append(filename)
 
     Files_No += 1

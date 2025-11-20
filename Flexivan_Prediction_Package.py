@@ -30,6 +30,135 @@ from docx.oxml.ns import qn
 import warnings
 warnings.filterwarnings("ignore")
 
+class File_Analysis_Reults():
+    def __init__(self, Fullpath, Sorting_Field, Columns_2_Drop_From_Training, Units='Days'):
+        self.Fullpath = Fullpath
+        self.Sorting_Field = Sorting_Field
+        self.Columns_2_Drop_From_Training = Columns_2_Drop_From_Training
+        self.Units = Units
+        self.Folder = None
+        self.Filename = None
+        self.Extension = None
+        self.DATA_ORIG = None               # The raw DataFrame that contains the data for analysis (loaded from CSV file)
+        self.DATA = None                    # Contains the same data after cleaning (dropping columns and null rows etc.)
+        self.Analysis_Info_DICT = {}        # A DICT contains general info about the data and results for use outside the function 
+        self.Return_DIFF_y_test = None
+        self.Return_DIFF_y_pred = None
+        self.Return_DIFF_RESULTS_DETAILED_DICT = None
+        self.Return_DIFF_RESULTS_DF = None
+        self.LOT_Prediction_y_test = None
+        self.LOT_Prediction_y_pred = None
+        self.LOT_Prediction_RESULTS_DETAILED_DICT = None
+
+        self.Load_Data(Fullpath)
+        self.Clean_Data(Sorting_Field)
+
+    def Load_Data(self, Fullpath):
+        self.DATA_ORIG = pd.read_csv(Fullpath)
+        self.DATA = copy.deepcopy(self.DATA_ORIG)
+        self.Folder = os.path.dirname(Fullpath)
+        self.Filename = os.path.splitext(os.path.basename(Fullpath))[0]
+        self.Extension = os.path.splitext(Fullpath)[1]
+
+        return 0
+
+    def Clean_Data(self, Sorting_Field):
+        # print(f'Cleaning data and sorting by {Sorting_Field}')
+        self.DATA['CHS Pickup Date'] = pd.to_datetime(self.DATA['CHS Pickup Date'], errors='coerce')
+        self.DATA['CHS Return Dt'] = pd.to_datetime(self.DATA['CHS Return Dt'], errors='coerce')
+
+        for col in self.DATA.select_dtypes(include=['object']).columns:
+            self.DATA[col] = self.DATA[col].map(lambda x: x.strip() if isinstance(x, str) else x)
+
+        # Normalize common missing markers and empty strings to NaN
+        self.DATA.replace(['', 'NA', 'N/A', 'na', 'n/a'], np.nan, inplace=True)
+
+        # Drop any row that contains at least one NaN
+        self.DATA.dropna(axis=0, how='any', inplace=True)
+
+        print(f'Sorting by field {Sorting_Field}...', end='')
+        self.DATA = self.DATA.sort_values(by=Sorting_Field)
+        print('DONE.')
+
+        self.DATA.reset_index(drop=True, inplace=True)
+
+        return 0
+
+    def Enumerate_Data(self, Enumerated_Columns_LIST=None):
+        # print(f'Enumerating data by fields:\n{Enumerated_Columns_LIST}')
+        if Enumerated_Columns_LIST is None:
+            Enumerated_Columns_LIST = ['CHS Pickup Loc', 'CHS Return Loc', 'CHS pickup MCO', 'CTR Trip MCO', 'O Customer', 'Customer', 'DC Loc', 'CTR Pickup Term', 'CTR Return Term', 
+                                'pgkey', 'CTR Trip Loc Type Pattern', 'CTR Trip Pattern']
+        
+        for column in self.DATA.columns:
+            if column in Enumerated_Columns_LIST:
+                self.DATA = enumerate_columns(self.DATA, column)
+
+        for column in self.self:
+            if column in self.DATA.columns:
+                self.DATA.drop(columns=[column], inplace=True)
+        try:
+            self.DATA['CHS Return Loc'] = self.DATA['CHS Return Loc'].astype(int)
+        except:
+            pass
+
+        return
+
+    def Analyze_Data_File(self, window_size, step, Error_Threshold=20, test_frac=.2):
+        # This function analyzes data in CSV found in Fullpath. It uses the sliding window XGBoost model (test and train over a portion of the data)
+        # The process is repeated for sliding windows of size (window_size with step of step samples)
+
+        Folder = os.path.dirname(self.Fullpath)
+        Filename = os.path.basename(self.Fullpath)
+
+        self.Clean_Data(self.Sorting_Field)
+        print(f"Rows after cleaning: " + Fore.YELLOW + f'{len(self.DATA)}' + Fore.RESET + ' (' + Fore.GREEN + f'{int(100*len(self.DATA)/len(self.DATA_ORIG))}' + Fore.RESET + ')% remained after cleaning')
+        print(f'Sorted by ' + Fore.YELLOW + f'{self.Sorting_Field}' + Fore.RESET + ' field')
+
+        self.Analysis_Info_DICT['Total_Lines'] = len(self.DATA_ORIG)
+        self.Analysis_Info_DICT['Rows_After_Cleaning'] = len(self.DATA)
+
+        self.Enumerate_Data()
+    
+        #region RETURN PREDICTIONS
+
+        #region Calculating differences and addting new columns
+        
+        Diff_Col_Name = f'Pickup_Return_Time_Diff_{self.Units}'
+        Analysis_Info_DICT['Time_Diff_Units'] = self.Units
+
+        if self.Units == 'Hours':
+            self.DATA[Diff_Col_Name] = (self.DATA['CHS Return Dt'] - self.DATA['CHS Pickup Date']).dt.total_seconds() / 3600
+            
+        elif self.Units == 'Days':
+            self.DATA[Diff_Col_Name] = (self.DATA['CHS Return Dt'] - self.DATA['CHS Pickup Date']).dt.total_seconds() / (3600*24)
+
+        #endregion
+
+        # Predicting return time diff
+        step=int(test_frac * window_size)      # Force so there will be no overlapping results (more than one prediction per sample)
+        self.Return_DIFF_RESULTS_DF, self.Return_DIFF_y_test, self.Return_DIFF_y_pred, self.Return_DIFF_RESULTS_DETAILED_DICT = sliding_xgb_window_eval(self.DATA, Diff_Col_Name, window_size, step, test_frac,
+                                                                                Error_Threshold, xgb_params=None, random_state=42,
+                                                                                min_test_samples=2, show_progress=False, Classifier_or_Regressor=0)
+        #endregion
+        
+        #region LOR PREDICTION
+
+        # Predicting return LOT
+        __, y_test_Return_LOT, y_pred_Return_LOT, self.RESULTS_DETAILED_DICT_LOT = sliding_xgb_window_eval(self.DATA, 'CHS Return Loc', window_size, step, test_frac,
+                                                                                Error_Threshold, xgb_params=None, random_state=42,
+                                                                                min_test_samples=2, show_progress=False, Classifier_or_Regressor=0)
+        y_pred_Return_LOT = [int(x) for x in y_pred_Return_LOT]
+
+        #endregion
+
+        # # Analyze RESULTS_DETAILE
+        self.Analysis_Info_DICT['Model_Window_Size'] = window_size
+        self.Analysis_Info_DICT['Model_Window_Step'] = step
+        self.Analysis_Info_DICT['Model_Erro_THR'] = Error_Threshold
+
+        return 0
+ 
 
 def Divide_ARR_2_Arrays_by_Range(DF, Column_Name, Ranges):
     # This function takes a DataFrame and Ranges = [0, 10, 20, ..., 100] any selected values
@@ -245,109 +374,6 @@ def Analyze_RAW_Windows_Results(DATA, RESULTS_DETAILED_DICT):
 
     return RESULTS_DETAILED_DF_REFINED
         
-def Analyze_Data_File(Fullpath, Columns_2_Drop_From_Training, window_size, step, Error_Threshold=20, test_frac=.2, Sorting_Field='CHS Pickup Date'):
-    # This function analyzes data in CSV found in Fullpath. It uses the sliding window XGBoost model (test and train over a portion of the data)
-    # The process is repeated for sliding windows of size (window_size with step of step samples)
-
-    Folder = os.path.dirname(Fullpath)
-    Filename = os.path.basename(Fullpath)
-
-    Analysis_Info_DICT = {}
-
-    #region Load data from file
-    DATA = pd.read_csv(Folder + '/' + Filename)
-
-    DATA['CHS Pickup Date'] = pd.to_datetime(DATA['CHS Pickup Date'], errors='coerce')
-    DATA['CHS Return Dt'] = pd.to_datetime(DATA['CHS Return Dt'], errors='coerce')
-    DATA_ORIG = copy.deepcopy(DATA)
-
-    Analysis_Info_DICT['Total_Lines'] = len(DATA_ORIG)
-
-    #endregion
-
-    #region Data cleanup
-
-    DATA_LEN = len(DATA)
-
-    for col in DATA.select_dtypes(include=['object']).columns:
-        DATA[col] = DATA[col].map(lambda x: x.strip() if isinstance(x, str) else x)
-
-    # Normalize common missing markers and empty strings to NaN
-    DATA.replace(['', 'NA', 'N/A', 'na', 'n/a'], np.nan, inplace=True)
-
-    # Drop any row that contains at least one NaN
-    DATA.dropna(axis=0, how='any', inplace=True)
-
-    print(f'Sorting by field {Sorting_Field}...', end='')
-    DATA = DATA.sort_values(by=Sorting_Field)
-    print('DONE.')
-
-    DATA.reset_index(drop=True, inplace=True)
-
-    print(f"Rows after cleaning: " + Fore.YELLOW + f'{len(DATA)}' + Fore.RESET + ' (' + Fore.GREEN + f'{int(100*len(DATA)/DATA_LEN)}' + Fore.RESET + ')% remained after cleaning')
-    print(f'Sorted by ' + Fore.YELLOW + f'{Sorting_Field}' + Fore.RESET + ' field')
-
-    Analysis_Info_DICT['Rows_After_Cleaning'] = len(DATA)
-
-    #endregion
-
-    #region Calculating differences and addting new columns
-    
-    Units = 'Days'
-    Diff_Col_Name = f'Pickup_Return_Time_Diff_{Units}'
-    Analysis_Info_DICT['Time_Diff_Units'] = Units
-
-    if Units == 'Hours':
-        DATA[Diff_Col_Name] = (DATA['CHS Return Dt'] - DATA['CHS Pickup Date']).dt.total_seconds() / 3600
-        
-    elif Units == 'Days':
-        DATA[Diff_Col_Name] = (DATA['CHS Return Dt'] - DATA['CHS Pickup Date']).dt.total_seconds() / (3600*24)
-
-    #endregion
-
-    #region Enumerate data
-
-    Enumerated_Columns_LIST = ['CHS Pickup Loc', 'CHS Return Loc', 'CHS pickup MCO', 'CTR Trip MCO', 'O Customer', 'Customer', 'DC Loc', 'CTR Pickup Term', 'CTR Return Term', 
-                           'pgkey', 'CTR Trip Loc Type Pattern', 'CTR Trip Pattern']
-    
-    for column in DATA.columns:
-        if column in Enumerated_Columns_LIST:
-            DATA = enumerate_columns(DATA, column)
-
-    for column in Columns_2_Drop_From_Training:
-        if column in DATA.columns:
-            DATA.drop(columns=[column], inplace=True)
-    try:
-        DATA['CHS Return Loc'] = DATA['CHS Return Loc'].astype(int)
-    except:
-        pass
-
-    #endregion
-
-    #region Analyzing data file    
-
-    # Predicting return time diff
-    step=int(test_frac * window_size)      # Force so there will be no overlapping results (more than one prediction per sample)
-    Results_DF, y_test, y_pred, RESULTS_DETAILED_DICT = sliding_xgb_window_eval(DATA, Diff_Col_Name, window_size, step, test_frac,
-                                                                              Error_Threshold, xgb_params=None, random_state=42,
-                                                                              min_test_samples=2, show_progress=False, Classifier_or_Regressor=0)
-    # Predicting return LOT
-    __, y_test_Return_LOT, y_pred_Return_LOT, RESULTS_DETAILED_DICT_LOT = sliding_xgb_window_eval(DATA, 'CHS Return Loc', window_size, step, test_frac,
-                                                                              Error_Threshold, xgb_params=None, random_state=42,
-                                                                              min_test_samples=2, show_progress=False, Classifier_or_Regressor=0)
-    y_pred_Return_LOT = [int(x) for x in y_pred_Return_LOT]
-
-    # # Analyze RESULTS_DETAILED_DF - raw results from all windows of the XGBoost. Takes the best accuracy for each pickup date index
-    # RESULTS_DETAILED_REFINED = Analyze_RAW_Windows_Results(DATA_ORIG, RESULTS_DETAILED_DICT)
-    
-    Analysis_Info_DICT['Model_Window_Size'] = window_size
-    Analysis_Info_DICT['Model_Window_Step'] = step
-    Analysis_Info_DICT['Model_Erro_THR'] = Error_Threshold
-
-    #endregion
-
-    return Results_DF, DATA_ORIG, DATA, Analysis_Info_DICT, y_test, y_pred, RESULTS_DETAILED_DICT, RESULTS_DETAILED_DICT_LOT
-
 def extract_datetimes_from_filenames(filenames):
     """
     Extracts datetime objects from filenames of the form 'Latest_Test_<DATE>'.
@@ -496,3 +522,30 @@ def Add_File_Results_2_ACCUM_Results_DF(DATA_ORIG, Results_File_ACCUM_DF, Detail
     return Results_File_ACCUM_DF
 
 #endregion
+
+def extract_datetimes_from_filenames(filenames):
+    """
+    Extracts datetime objects from filenames of the form 'Latest_Test_<DATE>'.
+    Supports formats like YYYY-MM-DD, YYYYMMDD, or YYYY_MM_DD.
+    """
+    datetimes = []
+
+    for name in filenames:
+        # Try to find the date pattern
+        match = re.search(r'(\d{4}[-_]\d{2}[-_]\d{2}|\d{8})', name)
+        if match:
+            date_str = match.group(1)
+            
+            # Normalize formats like YYYY_MM_DD → YYYY-MM-DD
+            date_str = date_str.replace("_", "-")
+            
+            # Try multiple possible formats
+            for fmt in ("%Y-%m-%d", "%Y%m%d"):
+                try:
+                    dt = datetime.strptime(date_str, fmt)
+                    datetimes.append(dt)
+                    break
+                except ValueError:
+                    continue
+
+    return datetimes
