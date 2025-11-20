@@ -12,6 +12,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 from xgboost import XGBClassifier
 from xgboost import XGBRegressor
+import xgboost as xgb
 from datetime import datetime, timedelta
 from pathlib import Path
 from tqdm import tqdm
@@ -31,10 +32,11 @@ import warnings
 warnings.filterwarnings("ignore")
 
 class File_Analysis_Reults():
-    def __init__(self, Fullpath, Sorting_Field, Columns_2_Drop_From_Training, Units='Days'):
+    def __init__(self, Fullpath, Sorting_Field, Columns_2_Drop_From_Training, Enumerated_Columns_LIST=None, Units='Days'):
         self.Fullpath = Fullpath
         self.Sorting_Field = Sorting_Field
         self.Columns_2_Drop_From_Training = Columns_2_Drop_From_Training
+        self.Enumerated_Columns_LIST = Enumerated_Columns_LIST
         self.Units = Units
         self.Folder = None
         self.Filename = None
@@ -52,7 +54,8 @@ class File_Analysis_Reults():
 
         self.Load_Data(Fullpath)
         self.Clean_Data(Sorting_Field)
-
+        self.Enumerate_Data(self.Enumerated_Columns_LIST)
+        
     def Load_Data(self, Fullpath):
         self.DATA_ORIG = pd.read_csv(Fullpath)
         self.DATA = copy.deepcopy(self.DATA_ORIG)
@@ -76,7 +79,7 @@ class File_Analysis_Reults():
         # Drop any row that contains at least one NaN
         self.DATA.dropna(axis=0, how='any', inplace=True)
 
-        print(f'Sorting by field {Sorting_Field}...', end='')
+        # print(f'Sorting by field {Sorting_Field}...', end='')
         self.DATA = self.DATA.sort_values(by=Sorting_Field)
         print('DONE.')
 
@@ -90,19 +93,20 @@ class File_Analysis_Reults():
             Enumerated_Columns_LIST = ['CHS Pickup Loc', 'CHS Return Loc', 'CHS pickup MCO', 'CTR Trip MCO', 'O Customer', 'Customer', 'DC Loc', 'CTR Pickup Term', 'CTR Return Term', 
                                 'pgkey', 'CTR Trip Loc Type Pattern', 'CTR Trip Pattern']
         
-        for column in self.DATA.columns:
-            if column in Enumerated_Columns_LIST:
-                self.DATA = enumerate_columns(self.DATA, column)
+        # Convert datetime columns to timestamp (float)
+        for col in self.DATA.select_dtypes(include=['datetime64[ns]', 'datetime64']).columns:
+            self.DATA[col] = self.DATA[col].astype('int64') // 1_000_000_000   # seconds
 
-        for column in self.self:
-            if column in self.DATA.columns:
-                self.DATA.drop(columns=[column], inplace=True)
-        try:
-            self.DATA['CHS Return Loc'] = self.DATA['CHS Return Loc'].astype(int)
-        except:
-            pass
+        # Enumerate each object/string column
+        for col in Enumerated_Columns_LIST:
+            if col in self.DATA.columns:
+                self.DATA[col] = self.DATA[col].astype('category').cat.codes
 
-        return
+        # Convert remaining object dtype to category automatically
+        for col in self.DATA.select_dtypes(include=['object']).columns:
+            self.DATA[col] = self.DATA[col].astype('category').cat.codes
+
+        return 0
 
     def Analyze_Data_File(self, window_size, step, Error_Threshold=20, test_frac=.2):
         # This function analyzes data in CSV found in Fullpath. It uses the sliding window XGBoost model (test and train over a portion of the data)
@@ -549,3 +553,36 @@ def extract_datetimes_from_filenames(filenames):
                     continue
 
     return datetimes
+
+def Comma_Separation_Num_String(n):
+    return f"{n:,}"
+
+def align_df_to_model(df: pd.DataFrame, model, fill_value=0):
+    """
+    Align a dataframe to match the feature order and feature names
+    expected by an XGBoost model (XGBClassifier or Booster).
+    """
+
+    # Extract the booster
+    if hasattr(model, "get_booster"):
+        booster = model.get_booster()
+    else:
+        booster = model  # assume it's already a booster
+
+    expected_cols = booster.feature_names
+
+    if expected_cols is None:
+        raise ValueError(
+            "Model has no feature names. "
+            "Train the model with a DataFrame or specify feature_names in DMatrix."
+        )
+
+    # Add any missing columns
+    for col in expected_cols:
+        if col not in df.columns:
+            df[col] = fill_value
+
+    # Keep only expected columns in correct order
+    df = df[expected_cols]
+
+    return df
