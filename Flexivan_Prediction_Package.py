@@ -10,6 +10,8 @@ import sys
 
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import LabelEncoder
+
 from xgboost import XGBClassifier
 from xgboost import XGBRegressor
 import xgboost as xgb
@@ -51,18 +53,37 @@ class File_Analysis_Reults():
         self.LOT_Prediction_y_test = None
         self.LOT_Prediction_y_pred = None
         self.LOT_Prediction_RESULTS_DETAILED_DICT = None
+        self.MAPPINGS_CHS_Pickup_Loc = {}
 
         self.Load_Data(Fullpath)
         self.Clean_Data(Sorting_Field)
         self.Enumerate_Data(self.Enumerated_Columns_LIST)
         
     def Load_Data(self, Fullpath):
-        self.DATA_ORIG = pd.read_csv(Fullpath)
-        self.DATA = copy.deepcopy(self.DATA_ORIG)
-        self.Folder = os.path.dirname(Fullpath)
-        self.Filename = os.path.splitext(os.path.basename(Fullpath))[0]
-        self.Extension = os.path.splitext(Fullpath)[1]
+        if isinstance(Fullpath, str):
+            Fullpath = [Fullpath]
 
+        self.DATA_ORIG = None
+
+        for fullpath in Fullpath:
+            DATA_TEMP = pd.read_csv(fullpath)
+
+            if self.DATA_ORIG is None:
+                self.DATA_ORIG = copy.deepcopy(DATA_TEMP)
+            else:
+                self.DATA_ORIG = pd.concat([self.DATA_ORIG, DATA_TEMP])
+
+        self.DATA = copy.deepcopy(self.DATA_ORIG)
+
+        if isinstance(Fullpath, list):
+            self.Folder = None
+            self.Filename = None
+            self.Extension = None
+        else:
+            self.Folder = os.path.dirname(Fullpath)
+            self.Filename = os.path.splitext(os.path.basename(Fullpath))[0]
+            self.Extension = os.path.splitext(Fullpath)[1]
+        
         return 0
 
     def Clean_Data(self, Sorting_Field):
@@ -88,23 +109,34 @@ class File_Analysis_Reults():
         return 0
 
     def Enumerate_Data(self, Enumerated_Columns_LIST=None):
-        # print(f'Enumerating data by fields:\n{Enumerated_Columns_LIST}')
+       # If no list was provided, use your default fields:
         if Enumerated_Columns_LIST is None:
-            Enumerated_Columns_LIST = ['CHS Pickup Loc', 'CHS Return Loc', 'CHS pickup MCO', 'CTR Trip MCO', 'O Customer', 'Customer', 'DC Loc', 'CTR Pickup Term', 'CTR Return Term', 
-                                'pgkey', 'CTR Trip Loc Type Pattern', 'CTR Trip Pattern']
-        
-        # Convert datetime columns to timestamp (float)
+            Enumerated_Columns_LIST = [
+                'CHS Pickup Loc', 'CHS Return Loc', 'CHS pickup MCO', 
+                'CTR Trip MCO', 'O Customer', 'Customer', 'DC Loc', 
+                'CTR Pickup Term', 'CTR Return Term', 'pgkey', 
+                'CTR Trip Loc Type Pattern', 'CTR Trip Pattern'
+            ]
+            
+        # Convert datetime columns to timestamps (seconds)
         for col in self.DATA.select_dtypes(include=['datetime64[ns]', 'datetime64']).columns:
-            self.DATA[col] = self.DATA[col].astype('int64') // 1_000_000_000   # seconds
+            self.DATA[col] = self.DATA[col].astype('int64') // 1_000_000_000
 
-        # Enumerate each object/string column
+        # Enumerate specified columns
         for col in Enumerated_Columns_LIST:
             if col in self.DATA.columns:
-                self.DATA[col] = self.DATA[col].astype('category').cat.codes
+                self.DATA[col] = self.DATA[col].astype('category')
+                # Save mapping
+                if col=='CHS Pickup Loc':
+                    self.MAPPINGS_CHS_Pickup_Loc = dict(enumerate(self.DATA[col].cat.categories))
+                # Convert to codes
+                self.DATA[col] = self.DATA[col].cat.codes
 
-        # Convert remaining object dtype to category automatically
+        # Enumerate remaining object columns
         for col in self.DATA.select_dtypes(include=['object']).columns:
-            self.DATA[col] = self.DATA[col].astype('category').cat.codes
+            self.DATA[col] = self.DATA[col].astype('category')
+            # Convert to codes
+            self.DATA[col] = self.DATA[col].cat.codes
 
         return 0
 
@@ -525,8 +557,6 @@ def Add_File_Results_2_ACCUM_Results_DF(DATA_ORIG, Results_File_ACCUM_DF, Detail
 
     return Results_File_ACCUM_DF
 
-#endregion
-
 def extract_datetimes_from_filenames(filenames):
     """
     Extracts datetime objects from filenames of the form 'Latest_Test_<DATE>'.
@@ -586,3 +616,136 @@ def align_df_to_model(df: pd.DataFrame, model, fill_value=0):
     df = df[expected_cols]
 
     return df
+
+def Supplument_XGBoost_Model_TRAINing(Booster_Model, X_new, y_new):
+    training_cols = Booster_Model.feature_names
+    X_new = align_to_train_columns(X_new, training_cols)
+    dnew = xgb.DMatrix(X_new, label=y_new)
+
+    cols = Booster_Model.feature_names
+
+    params = {
+        "objective": "multi:softprob",   # or "binary:logistic" for binary
+        "num_class": len(set(y_new)),        # remove this line if binary
+    }
+
+    # Continue training for some rounds
+    Booster_Model = xgb.train(
+        params,
+        dnew,
+        num_boost_round=20,       # number of NEW trees
+        xgb_model=Booster_Model         # important!
+    )
+
+    return Booster_Model
+
+def Train_XGBoost(X, y):
+    le = LabelEncoder()
+    y_encoded = le.fit_transform(y)
+
+    dtrain = xgb.DMatrix(X, label=y_encoded)
+
+    params = {
+        "objective": "multi:softprob",   # or "binary:logistic" for binary
+        "num_class": len(set(y)),        # remove this line if binary
+    }
+
+    model = xgb.train(
+        params=params,
+        dtrain=dtrain,
+        num_boost_round=20
+    )
+
+    return model, le
+
+def Predict_XGBoost(model, LE, X_test):
+    train_cols = model.feature_names
+    X_test = align_to_train_columns(X_test, train_cols)
+    dtest = xgb.DMatrix(X_test)
+    y_pred_probs = model.predict(dtest)
+
+    # binary vs multi-class
+    if y_pred_probs.ndim == 1:
+        single_class = LE.classes_[0]
+        y_pred_labels = np.array([single_class] * len(X_test))
+    else:
+        # multi-class case
+        y_pred_class = np.argmax(y_pred_probs, axis=1)
+        
+        # convert back to original labels
+        y_pred_labels = LE.inverse_transform(y_pred_class)
+
+    return y_pred_labels
+
+
+def align_to_train_columns(X_new, train_cols):
+    X_new = X_new.copy()
+    
+    # 1. Add missing columns
+    for col in train_cols:
+        if col not in X_new.columns:
+            X_new[col] = 0  # or np.nan
+    
+    # 2. Remove extra columns
+    X_new = X_new[train_cols]
+    
+    return X_new
+
+def split_df_by_membership(df, column_name, short_vec):
+    # If short_vec is empty, return empty df_in and full df_out
+    if len(short_vec) == 0:
+        return df.iloc[0:0].copy(), df.copy()
+    
+    # Convert short_vec to a set for fast lookup
+    allowed = set(short_vec)
+    
+    df_in = df[df[column_name].isin(allowed)].copy()
+    df_out = df[~df[column_name].isin(allowed)].copy()
+    
+    return df_in, df_out
+
+
+def Detect_File_Index_4_Stable_Enum(FILENAMES, Field, Folder=None):
+    # This function finds the file index in FILENAMES that is the last file that new values of Field were seen.
+    # From that file onwards, all files in FILENAMES will contain the subset of the Field unique values that were
+    # accumulated up to that point.
+
+    File_Index = 0
+    Unique_Values = []
+
+    print(f'Finding last file that contains stable unique values of {Field}...')
+
+    for filename in tqdm(FILENAMES):
+        if Folder is None:
+            DATA = pd.read_csv(filename)
+        else:
+            DATA = pd.read_csv(f'{Folder}/{filename}')
+            DATA_Unique_Values = list(DATA[Field].unique())
+
+            combined = list(set(Unique_Values + DATA_Unique_Values))
+
+            if len(combined) > len(Unique_Values):
+                File_Index += 1
+                Unique_Values = copy.deepcopy(combined)
+
+    print('DONE')
+
+    return File_Index
+
+def map_column_inplace(df, column_name, mapping_dict, fill_value=-1):
+    """
+    Replace a DataFrame column with integers according to a provided mapping dictionary.
+    
+    Args:
+        df: pandas DataFrame
+        column_name: str, name of the column to map
+        mapping_dict: dict, {string_value: int_value}
+        fill_value: int, value to assign if string not in mapping_dict (default -1)
+    
+    Returns:
+        pandas DataFrame with the column overwritten by mapped integers
+    """
+    df[column_name] = df[column_name].map(mapping_dict).fillna(fill_value).astype(int)
+    
+    return df
+

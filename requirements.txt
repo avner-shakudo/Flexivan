@@ -48,6 +48,7 @@ pure_eval==0.2.3
 pycodestyle==2.14.0
 pydantic==2.12.4
 pydantic_core==2.41.5
+pyfiglet==1.0.4
 pyflakes==3.4.0
 Pygments==2.19.2
 pyparsing==3.2.5
