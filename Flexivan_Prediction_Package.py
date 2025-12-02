@@ -57,7 +57,7 @@ class File_Analysis_Reults():
 
         self.Load_Data(Fullpath)
         self.Clean_Data(Sorting_Field)
-        self.Enumerate_Data(self.Enumerated_Columns_LIST)
+        # self.Enumerate_Data(self.Enumerated_Columns_LIST)
         
     def Load_Data(self, Fullpath):
         if isinstance(Fullpath, str):
@@ -146,6 +146,7 @@ class File_Analysis_Reults():
 
         Folder = os.path.dirname(self.Fullpath)
         Filename = os.path.basename(self.Fullpath)
+        Analysis_Info_DICT = {}
 
         self.Clean_Data(self.Sorting_Field)
         print(f"Rows after cleaning: " + Fore.YELLOW + f'{len(self.DATA)}' + Fore.RESET + ' (' + Fore.GREEN + f'{int(100*len(self.DATA)/len(self.DATA_ORIG))}' + Fore.RESET + ')% remained after cleaning')
@@ -153,8 +154,6 @@ class File_Analysis_Reults():
 
         self.Analysis_Info_DICT['Total_Lines'] = len(self.DATA_ORIG)
         self.Analysis_Info_DICT['Rows_After_Cleaning'] = len(self.DATA)
-
-        self.Enumerate_Data()
     
         #region RETURN PREDICTIONS
 
@@ -170,6 +169,8 @@ class File_Analysis_Reults():
             self.DATA[Diff_Col_Name] = (self.DATA['CHS Return Dt'] - self.DATA['CHS Pickup Date']).dt.total_seconds() / (3600*24)
 
         #endregion
+
+        self.Enumerate_Data()
 
         # Predicting return time diff
         step=int(test_frac * window_size)      # Force so there will be no overlapping results (more than one prediction per sample)
@@ -617,6 +618,7 @@ def align_df_to_model(df: pd.DataFrame, model, fill_value=0):
 
     return df
 
+<<<<<<< HEAD
 def Supplument_XGBoost_Model_TRAINing(Booster_Model, X_new, y_new):
     training_cols = Booster_Model.feature_names
     X_new = align_to_train_columns(X_new, training_cols)
@@ -749,3 +751,97 @@ def map_column_inplace(df, column_name, mapping_dict, fill_value=-1):
     
     return df
 
+=======
+def auto_extrapolate(values, steps_ahead=1):
+    """
+    Automatically detect trend (linear, quadratic, cubic)
+    and extrapolate based on best polynomial fit.
+    """
+    if len(values) < 3:
+        # Too few values → fall back to linear
+        x = np.arange(len(values))
+        coeffs = np.polyfit(x, values, 1)
+        poly = np.poly1d(coeffs)
+        return poly(len(values)-1 + steps_ahead)
+
+    x = np.arange(len(values))
+    y = np.array(values)
+
+    best_degree = None
+    best_error = float('inf')
+    best_poly = None
+
+    # Try degrees 1 (linear), 2 (quadratic), 3 (cubic)
+    for degree in [1, 2, 3]:
+        coeffs = np.polyfit(x, y, degree)
+        poly = np.poly1d(coeffs)
+
+        # compute error on known points
+        y_pred = poly(x)
+        error = np.mean((y - y_pred) ** 2)
+
+        if error < best_error:
+            best_error = error
+            best_degree = degree
+            best_poly = poly
+
+    # Extrapolate using the best model
+    return best_poly(len(values)-1 + steps_ahead)
+
+def find_latest_date(date_dict):
+    """
+    Return the latest date from dictionary keys which can be
+    datetime objects or date strings.
+    Supports multiple common date formats.
+    """
+    if not date_dict:
+        return None
+
+    # Known date formats to attempt
+    date_formats = [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S"
+    ]
+
+    parsed_dates = []
+
+    for key in date_dict.keys():
+        if isinstance(key, datetime):
+            parsed_dates.append(key)
+        elif isinstance(key, str):
+            parsed = None
+            for fmt in date_formats:
+                try:
+                    parsed = datetime.strptime(key, fmt)
+                    break
+                except ValueError:
+                    continue
+            if parsed is None:
+                raise ValueError(f"Unsupported date format: {key}")
+            parsed_dates.append(parsed)
+        else:
+            raise TypeError(f"Unsupported key type: {type(key)}")
+
+    return max(parsed_dates)
+
+def Extrapolate_PUs_Number(LOT_PUs_Num_Comb, Selected_Date_4_Pred, Extrapolation_Window_Size=10):
+    # This function takes a LOT code and its comb of values for the number of PUs for the last N days
+    # and extrapolates the number of PUs in the Selected_Date_4_Pred
+    # LOT_PUs_Num_Comb[date] = [a1, a2,...,aN]
+    
+    values = [value for key, value in sorted(LOT_PUs_Num_Comb.items(), key=lambda x: x[0])]
+    # Compute the number of time units (days) between the Selected_Date_4_Pred and the last date in COMB
+    steps_ahead = int((Selected_Date_4_Pred - find_latest_date(LOT_PUs_Num_Comb)).total_seconds() / (24*3600))
+
+    if len(values) >= Extrapolation_Window_Size:
+        # Extrapolate according to COMB figures
+        return auto_extrapolate(values, steps_ahead)
+    else:
+        return sum(values) / len(values)
+
+    return None
+>>>>>>> c0652e4 (With main PAST files full daily report flow (returns and pickups))

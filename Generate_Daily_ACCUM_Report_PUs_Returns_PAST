@@ -1,0 +1,159 @@
+import pandas as pd
+import numpy as np
+import os
+import pyfiglet
+
+from colorama import Fore
+from tqdm import tqdm
+from datetime import datetime
+
+import Flexivan_Prediction_Package
+
+
+Sorting_Field='CHS Pickup Date'
+Test_Portion = .2
+Window_Size = 5000
+Window_Step_Size = int(Test_Portion * Window_Size)
+Error_THR = 20      # Percentage (0-100)
+
+Pickup_LOT_Field_Name = 'CHS Pickup Loc'
+Return_LOT_Field_Name = 'CHS Return Loc'
+Columns_2_Drop_From_Training = ['CHS ID', 'CTR Trip Id', 'CHS Return Dt', 'CHS Pickup Date', 'CTR pick Dt', 'CTR Return Dt']
+Enumerated_Columns_LIST = ['CHS Pickup Loc', 'CHS Return Loc', 'CHS pickup MCO', 'CTR Trip MCO', 'O Customer', 'Customer', 'DC Loc', 'CTR Pickup Term', 'CTR Return Term', 
+                           'pgkey', 'CTR Trip Loc Type Pattern', 'CTR Trip Pattern']
+
+Extrapolation_Window_Size = 10
+
+#region Load all past data filenames
+
+# Get filenames from folder
+print('Getting PAST raw data filenames...')
+DATA_Folder = './Flexivan/Daily prediction/DATA'
+
+FILENAMES = [f for f in os.listdir(DATA_Folder) if os.path.isfile(os.path.join(DATA_Folder, f))]
+selected = "Latest_Test_"
+selected2 = '_DETAILED'
+FILENAMES = [f for f in FILENAMES if selected in f and selected2 not in f]
+DATES = Flexivan_Prediction_Package.extract_datetimes_from_filenames(FILENAMES)
+Filenames_DF = pd.DataFrame({
+    "Filenames": FILENAMES,
+    "Dates": DATES
+})
+Filenames_DF_Sorted = Filenames_DF.sort_values(by='Dates')
+FILENAMES = list(Filenames_DF_Sorted['Filenames'])
+DATES = list(Filenames_DF_Sorted['Dates'])
+
+print(f'DONE - {len(FILENAMES)} Filenames were found')
+# print(FILENAMES)
+
+#endregion
+
+#region Load all DAILY ACCUM reports (one for each lot) from files
+
+Daily_ACCUM_Reports_Folder = '/root/Flexivan/DAILY_ACCUM_REPORTS'
+try:
+    os.mkdir(Daily_ACCUM_Reports_Folder)
+except:
+    pass
+
+DAILY_ACCUM_Reports_DICT = {}
+
+print('Loading DAILY ACCUM REPORTS per lot from folder...', end='')
+DAILY_ACCUM_REPORTS_Filenames = [f for f in os.listdir(Daily_ACCUM_Reports_Folder) if os.path.isfile(os.path.join(Daily_ACCUM_Reports_Folder, f))]
+print(f'{len(DAILY_ACCUM_REPORTS_Filenames)} reports found')
+
+for daily_accum_report_filename in DAILY_ACCUM_REPORTS_Filenames:
+    DF = pd.read_csv(f'{Daily_ACCUM_Reports_Folder}/{daily_accum_report_filename}')
+    ARGS = daily_accum_report_filename.split('_')
+    pu_lot = ARGS[0]
+    DAILY_ACCUM_Reports_DICT[pu_lot] = DF
+
+print(f'{len(DAILY_ACCUM_Reports_DICT)} reports loaded successfully')
+
+#endregion
+
+PU_Moving_AVG_REP = {}
+
+print(pyfiglet.figlet_format("Building Reports..."))
+
+for file_index, filename in enumerate(FILENAMES):
+    # Load data from file into OBJECT
+    print(f'Reading file:\t' + Fore.YELLOW + f'{filename}' + Fore.RESET + '...', end='')
+    File_Analysis_Results_OBJ = Flexivan_Prediction_Package.File_Analysis_Reults(f'{DATA_Folder}/{filename}', Sorting_Field, Columns_2_Drop_From_Training, Enumerated_Columns_LIST)
+    
+    percentage = int(100*len(File_Analysis_Results_OBJ.DATA)/len(File_Analysis_Results_OBJ.DATA_ORIG))
+    print('Samples num:\t' + Fore.YELLOW + f'{Flexivan_Prediction_Package.Comma_Separation_Num_String(len(File_Analysis_Results_OBJ.DATA))}' + Fore.RESET + ' (' + Fore.YELLOW + f' ({percentage}' + Fore.RESET + '% out of original data after cleaning)')
+
+    Ret_LOTs_Unique = list(File_Analysis_Results_OBJ.DATA[Return_LOT_Field_Name].unique())
+    print(f'Ret_LOTs_Unique = {Ret_LOTs_Unique}')
+
+    filename_date = Flexivan_Prediction_Package.extract_datetimes_from_filenames([filename])[0]     # There is only on date in list
+
+    for return_lot in Ret_LOTs_Unique:
+        # Load data from CSV
+        DATA_Ret = File_Analysis_Results_OBJ.DATA[File_Analysis_Results_OBJ.DATA[Return_LOT_Field_Name]==return_lot]    # Return lot is known according to loan initial available data
+        DATA_Ret.to_csv(f'{DATA_Folder}/TEMP_DATA_RETURN_PRED.CSV')
+
+        #region RETURN TIMES prediction
+
+        File_Analysis_Results_OBJ_TEMP = Flexivan_Prediction_Package.File_Analysis_Reults(f'{DATA_Folder}/TEMP_DATA_RETURN_PRED.CSV', Sorting_Field, Columns_2_Drop_From_Training)
+        File_Analysis_Results_OBJ_TEMP.Analyze_Data_File(Window_Size, Window_Step_Size, Error_THR, Test_Portion)
+        
+        # Handle the adding of the ACCUM predictions to the main results file (daily file)
+        try:
+            DAILY_ACCUM_Reports_DICT[return_lot]
+        except:
+            DAILY_ACCUM_Reports_DICT[return_lot] = None
+
+        DAILY_ACCUM_Reports_DICT[return_lot] = Flexivan_Prediction_Package.Add_File_Results_2_ACCUM_Results_DF(File_Analysis_Results_OBJ_TEMP.DATA_ORIG, DAILY_ACCUM_Reports_DICT[return_lot], File_Analysis_Results_OBJ_TEMP.Return_DIFF_RESULTS_DETAILED_DICT)
+        
+        #endregion
+
+        #region PICKUPS NUMBER prediction
+        Dates_From_Report = DAILY_ACCUM_Reports_DICT[return_lot].index
+
+        try:
+            PU_Moving_AVG_REP[return_lot]
+        except:
+            PU_Moving_AVG_REP[return_lot] = {}
+        
+        #region Update COMB
+
+        PU_Num_Current = len(DATA_Ret)
+        try:
+            PU_Moving_AVG_REP[return_lot][filename_date]
+        except:
+            PU_Moving_AVG_REP[return_lot][filename_date] = {}
+
+        PU_Moving_AVG_REP[return_lot][filename_date] = PU_Num_Current
+
+        #endregion
+        
+        for date_index, date in enumerate(Dates_From_Report):
+            print(f'Updating report date No.{date_index+1} out of {len(Dates_From_Report)} ({int(100*(date_index+1)/len(Dates_From_Report))}%)', end='\r')
+            date = datetime.strptime(date, '%Y-%m-%d')
+            
+            # Extrapolate
+            PU_Num_Pred = Flexivan_Prediction_Package.Extrapolate_PUs_Number(PU_Moving_AVG_REP[return_lot], date, Extrapolation_Window_Size)
+
+            # Add to report
+            date_str_index = date.strftime("%Y-%m-%d")
+            DAILY_ACCUM_Reports_DICT[return_lot].loc[date_str_index, 'Predicted_Pickups'] = PU_Num_Pred
+
+        #endregion
+
+    #endregion
+
+#region Save updated DAILY ACCUM REPORTS to folder
+
+print(f'\nUpdating DAILY ACCUM REPORTS...')
+
+for return_lot in tqdm(DAILY_ACCUM_Reports_DICT.keys()):
+    DAILY_ACCUM_Reports_DICT[return_lot].to_csv(f'{Daily_ACCUM_Reports_Folder}/Daily_ACCUM_Report_{return_lot}.csv')
+
+print(f'DONE - {len(DAILY_ACCUM_Reports_DICT.keys())} reports updated successfully.')
+
+#endregion
+
+# Remove the temp file used for returns prediction time
+os.remove(f'{DATA_Folder}/TEMP_DATA_RETURN_PRED.CSV')
