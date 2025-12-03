@@ -374,7 +374,12 @@ def sliding_xgb_window_eval(df, target_col, window_size, step, test_frac=0.2,
 
     print('DONE.')
 
-    return pd.DataFrame(results).sort_values('window_idx').reset_index(drop=True), y_test, y_pred, RESULTS_DETAILED_DF
+    try:
+        DF = pd.DataFrame(results).sort_values('window_idx').reset_index(drop=True), y_test, y_pred, RESULTS_DETAILED_DF
+    except:
+        pass
+
+    return DF
 
 def Analyze_RAW_Windows_Results(DATA, RESULTS_DETAILED_DICT):
     # This function takes the RESULTS_DETAILED_DF yielded by the sliding_xgb_window_eval function and contains the the results y_test-y_pred
@@ -618,7 +623,6 @@ def align_df_to_model(df: pd.DataFrame, model, fill_value=0):
 
     return df
 
-<<<<<<< HEAD
 def Supplument_XGBoost_Model_TRAINing(Booster_Model, X_new, y_new):
     training_cols = Booster_Model.feature_names
     X_new = align_to_train_columns(X_new, training_cols)
@@ -751,7 +755,6 @@ def map_column_inplace(df, column_name, mapping_dict, fill_value=-1):
     
     return df
 
-=======
 def auto_extrapolate(values, steps_ahead=1):
     """
     Automatically detect trend (linear, quadratic, cubic)
@@ -844,4 +847,3 @@ def Extrapolate_PUs_Number(LOT_PUs_Num_Comb, Selected_Date_4_Pred, Extrapolation
         return sum(values) / len(values)
 
     return None
->>>>>>> c0652e4 (With main PAST files full daily report flow (returns and pickups))
