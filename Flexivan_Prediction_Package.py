@@ -102,7 +102,6 @@ class File_Analysis_Reults():
 
         # print(f'Sorting by field {Sorting_Field}...', end='')
         self.DATA = self.DATA.sort_values(by=Sorting_Field)
-        print('DONE.')
 
         self.DATA.reset_index(drop=True, inplace=True)
 
@@ -181,11 +180,11 @@ class File_Analysis_Reults():
         
         #region LOR PREDICTION
 
-        # Predicting return LOT
-        __, y_test_Return_LOT, y_pred_Return_LOT, self.RESULTS_DETAILED_DICT_LOT = sliding_xgb_window_eval(self.DATA, 'CHS Return Loc', window_size, step, test_frac,
-                                                                                Error_Threshold, xgb_params=None, random_state=42,
-                                                                                min_test_samples=2, show_progress=False, Classifier_or_Regressor=0)
-        y_pred_Return_LOT = [int(x) for x in y_pred_Return_LOT]
+        # # Predicting return LOT
+        # __, y_test_Return_LOT, y_pred_Return_LOT, self.RESULTS_DETAILED_DICT_LOT = sliding_xgb_window_eval(self.DATA, 'CHS Return Loc', window_size, step, test_frac,
+        #                                                                         Error_Threshold, xgb_params=None, random_state=42,
+        #                                                                         min_test_samples=2, show_progress=False, Classifier_or_Regressor=0)
+        # y_pred_Return_LOT = [int(x) for x in y_pred_Return_LOT]
 
         #endregion
 
@@ -294,7 +293,7 @@ def sliding_xgb_window_eval(df, target_col, window_size, step, test_frac=0.2,
     n = len(df)
     if window_size > n:
         window_size = n
-        print("window_size larger than dataframe length. Setting one windw")
+        print("window_size larger than dataframe length. Setting one window")
 
     indices = range(0, n - window_size + 1, step)
     iterator = tqdm(indices) if show_progress else indices
@@ -304,6 +303,10 @@ def sliding_xgb_window_eval(df, target_col, window_size, step, test_frac=0.2,
 
     print('Training and predicting for sliding windows...')
     for start in tqdm(iterator):
+        y_test = None
+        y_pred = None 
+        pct_under = 0
+
         try:
             end = start + window_size  # exclusive
             window = df.iloc[start:end].copy()
@@ -377,7 +380,7 @@ def sliding_xgb_window_eval(df, target_col, window_size, step, test_frac=0.2,
     try:
         DF = pd.DataFrame(results).sort_values('window_idx').reset_index(drop=True), y_test, y_pred, RESULTS_DETAILED_DF
     except:
-        pass
+        DF = None, None, None, None
 
     return DF
 
