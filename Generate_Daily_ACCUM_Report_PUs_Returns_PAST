@@ -119,6 +119,7 @@ for file_index, filename in enumerate(FILENAMES):
         #endregion
 
         #region PICKUPS NUMBER prediction
+        
         if DAILY_ACCUM_Reports_DICT[return_lot] is not None:
             Dates_From_Report = DAILY_ACCUM_Reports_DICT[return_lot].index
 
