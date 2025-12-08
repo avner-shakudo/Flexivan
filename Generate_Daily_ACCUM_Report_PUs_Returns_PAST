@@ -6,7 +6,7 @@ import time
 
 from colorama import Fore
 from tqdm import tqdm
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import Flexivan_Prediction_Package
 
@@ -24,12 +24,13 @@ Enumerated_Columns_LIST = ['CHS Pickup Loc', 'CHS Return Loc', 'CHS pickup MCO',
                            'pgkey', 'CTR Trip Loc Type Pattern', 'CTR Trip Pattern']
 
 Extrapolation_Window_Size = 10
+Prediction_Step_Size = 1
 
 #region Load all past data filenames
 
 # Get filenames from folder
 print('Getting PAST raw data filenames...')
-DATA_Folder = './Flexivan/Daily prediction/DATA'
+DATA_Folder = './Daily prediction/DATA'
 
 FILENAMES = [f for f in os.listdir(DATA_Folder) if os.path.isfile(os.path.join(DATA_Folder, f))]
 selected = "Latest_Test_"
@@ -51,7 +52,7 @@ print(f'DONE - {len(FILENAMES)} Filenames were found')
 
 #region Load all DAILY ACCUM reports (one for each lot) from files
 
-Daily_ACCUM_Reports_Folder = '/root/Flexivan/DAILY_ACCUM_REPORTS'
+Daily_ACCUM_Reports_Folder = '/root/Flexivan/Flexivan/DAILY_ACCUM_REPORTS'
 try:
     os.mkdir(Daily_ACCUM_Reports_Folder)
 except:
@@ -74,6 +75,8 @@ print(f'{len(DAILY_ACCUM_Reports_DICT)} reports loaded successfully')
 #endregion
 
 PU_Moving_AVG_REP = {}
+PU_Date_Time_Line_DATES = {}
+PU_Date_Time_Line_VALUES = {}
 
 print(pyfiglet.figlet_format("Building Reports..."))
 
@@ -91,9 +94,12 @@ for file_index, filename in enumerate(FILENAMES):
     print(f'Ret_LOTs_Unique = {Ret_LOTs_Unique}')
 
     filename_date = Flexivan_Prediction_Package.extract_datetimes_from_filenames([filename])[0]     # There is only on date in list
+    Next_Day = filename_date+timedelta(days=1)
+
+    print(pyfiglet.figlet_format(f'\nFile Index = {file_index}\n'))
 
     for return_lot in Ret_LOTs_Unique:
-        #region Load data from CSV
+        #region Load data from CSV for each LOT separately
 
         DATA_Ret = File_Analysis_Results_OBJ.DATA[File_Analysis_Results_OBJ.DATA[Return_LOT_Field_Name]==return_lot]    # Return lot is known according to loan initial available data
         DATA_Ret.to_csv(f'{DATA_Folder}/TEMP_DATA_RETURN_PRED.CSV')
@@ -123,38 +129,55 @@ for file_index, filename in enumerate(FILENAMES):
         if DAILY_ACCUM_Reports_DICT[return_lot] is not None:
             Dates_From_Report = DAILY_ACCUM_Reports_DICT[return_lot].index
 
+            if return_lot=='LAXAIM':
+                pass
+
             try:
-                PU_Moving_AVG_REP[return_lot]
+                PU_Date_Time_Line_DATES[return_lot]
             except:
-                PU_Moving_AVG_REP[return_lot] = {}
-            
-            #region Update COMB
+                PU_Date_Time_Line_DATES[return_lot] = {}
 
-            PU_Num_Current = len(DATA_Ret)
-            try:
-                PU_Moving_AVG_REP[return_lot][filename_date]
-            except:
-                PU_Moving_AVG_REP[return_lot][filename_date] = {}
-
-            PU_Moving_AVG_REP[return_lot][filename_date] = PU_Num_Current
-
-            #endregion
+            PU_Date_Time_Line_DATES[return_lot] = Flexivan_Prediction_Package.Update_PUs_Time_Line(PU_Date_Time_Line_DATES[return_lot], DATA_Ret, 'CHS Pickup Date')
             
             for date_index, date in enumerate(Dates_From_Report):
-                print(f'Updating report date No.{date_index+1} out of {len(Dates_From_Report)} ({int(100*(date_index+1)/len(Dates_From_Report))}%)', end='\r')
+                # print(f'Updating report date No.{date_index+1} out of {len(Dates_From_Report)} ({int(100*(date_index+1)/len(Dates_From_Report))}%)', end='\r')
+
                 date = datetime.strptime(date, '%Y-%m-%d')
+                PU_Date_Time_Line_DATES[return_lot] = dict(sorted(PU_Date_Time_Line_DATES[return_lot].items()))
+
+                TEMP_DATES_DICT = Flexivan_Prediction_Package.get_previous_N_entries(PU_Date_Time_Line_DATES[return_lot], 10, date)
+                DATES = list(TEMP_DATES_DICT.keys())
+
+                X_Values = Flexivan_Prediction_Package.map_dates_to_floats(DATES)
+                Y_Values = list(TEMP_DATES_DICT.values())
+
+                Steps_No = Flexivan_Prediction_Package.distance_to_closest(date, DATES)
                 
                 # Extrapolate
-                PU_Num_Pred = Flexivan_Prediction_Package.Extrapolate_PUs_Number(PU_Moving_AVG_REP[return_lot], date, Extrapolation_Window_Size)
+                PU_Num_Pred, _ = Flexivan_Prediction_Package.extrapolate_value_auto_degree(X_Values, Y_Values, Steps_No)
 
-                # Add to report
-                date_str_index = date.strftime("%Y-%m-%d")
-                DAILY_ACCUM_Reports_DICT[return_lot].loc[date_str_index, 'Predicted_Pickups'] = int(PU_Num_Pred)    # Regressor result (Float)
+                if PU_Num_Pred is not None:
+                    # Add to report
+                    date_str_index = date.strftime("%Y-%m-%d")
+                    DAILY_ACCUM_Reports_DICT[return_lot].loc[date_str_index, 'Predicted_Pickups'] = int(round(abs(PU_Num_Pred)))    # Regressor result (Float)
 
-            #endregion
+        #endregion
 
-    # if file_index>=0:
-    #     break
+    if file_index>=10:
+        break
+
+    # print(f'\nUpdating DAILY ACCUM REPORTS...')
+
+    # Successful_Reports = 0
+
+    # for return_lot in tqdm(DAILY_ACCUM_Reports_DICT.keys()):
+    #     if DAILY_ACCUM_Reports_DICT[return_lot] is not None:
+    #         DAILY_ACCUM_Reports_DICT[return_lot].to_csv(f'{Daily_ACCUM_Reports_Folder}/Daily_ACCUM_Report_{return_lot}.csv')
+    #         Successful_Reports += 1
+    #     else:
+    #         print(Fore.RED + f'Daily report for {return_lot} is None' + Fore.RESET)
+
+    # print(f'DONE - {Successful_Reports} out of {len(DAILY_ACCUM_Reports_DICT.keys())} reports updated successfully.')
 
     #endregion
 
@@ -166,7 +189,7 @@ Successful_Reports = 0
 
 for return_lot in tqdm(DAILY_ACCUM_Reports_DICT.keys()):
     if DAILY_ACCUM_Reports_DICT[return_lot] is not None:
-        DAILY_ACCUM_Reports_DICT[return_lot].to_csv(f'{Daily_ACCUM_Reports_Folder}/Daily_ACCUM_Report_{return_lot}.csv')
+        DAILY_ACCUM_Reports_DICT[return_lot].to_csv(f'{Daily_ACCUM_Reports_Folder}/Daily_ACCUM_Report_{return_lot}_{filename_date.strftime("%Y-%m-%d")}.csv')
         Successful_Reports += 1
     else:
         print(Fore.RED + f'Daily report for {return_lot} is None' + Fore.RESET)

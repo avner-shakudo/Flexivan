@@ -522,7 +522,7 @@ def Add_File_Results_2_ACCUM_Results_DF(DATA_ORIG, Results_File_ACCUM_DF, Detail
     # Detailed_Pred_Results_DF = [[y_pred], [y_test]], [Indexes_in_ORIG], [Predicted_LOT]]
 
     if Results_File_ACCUM_DF is None:
-        Results_File_ACCUM_DF = pd.DataFrame(columns=['LOT', 'Date', 'Predicted_Pickups', 'Predicted_Returns'])
+        Results_File_ACCUM_DF = pd.DataFrame(columns=['Date', 'Predicted_Pickups', 'Predicted_Returns'])
     
     #region Adding the RETURNS PREDICTION indormation into the ACCUM report
 
@@ -554,14 +554,14 @@ def Add_File_Results_2_ACCUM_Results_DF(DATA_ORIG, Results_File_ACCUM_DF, Detail
             Future_Date = DATE.strftime("%Y-%m-%d")
 
             if len(Results_File_ACCUM_DF)==0:
-                Results_File_ACCUM_DF.loc[len(Results_File_ACCUM_DF)] = [LOT, Future_Date, 0, 1]
+                Results_File_ACCUM_DF.loc[len(Results_File_ACCUM_DF)] = [Future_Date, 0, 1]
                 Results_File_ACCUM_DF.set_index('Date', inplace=True)
             else:
                 try:
                     Results_File_ACCUM_DF.loc[Future_Date, 'Predicted_Returns'] += 1
                     pass
                 except:
-                    Results_File_ACCUM_DF.loc[Future_Date] = [LOT, 0, 1]
+                    Results_File_ACCUM_DF.loc[Future_Date] = [0, 1]
     #endregion
 
     return Results_File_ACCUM_DF
@@ -758,66 +758,73 @@ def map_column_inplace(df, column_name, mapping_dict, fill_value=-1):
     
     return df
 
-def auto_extrapolate(values, steps_ahead=1):
-    """
-    Automatically detect trend (linear, quadratic, cubic)
-    and extrapolate based on best polynomial fit.
-    """
-    if len(values) < 3:
-        # Too few values → fall back to linear
-        x = np.arange(len(values))
-        coeffs = np.polyfit(x, values, 1)
-        poly = np.poly1d(coeffs)
-        return poly(len(values)-1 + steps_ahead)
-
-    x = np.arange(len(values))
-    y = np.array(values)
-
-    best_degree = None
+def extrapolate_value_auto_degree(x, y, x_target, max_degree=1):
+    x = np.array(x)
+    y = np.array(y)
+    
+    if len(x) == 0:
+        return -1, -1
+    elif len(x) == 1:
+        # Only one point: return that Y value
+        return y[0], 0
+    
+    best_degree = 1
     best_error = float('inf')
     best_poly = None
-
-    # Try degrees 1 (linear), 2 (quadratic), 3 (cubic)
-    for degree in [1, 2, 3]:
+    
+    # Limit degree to number of points minus 1
+    max_degree = min(max_degree, len(x)-1)
+    
+    for degree in range(1, max_degree+1):
         coeffs = np.polyfit(x, y, degree)
         poly = np.poly1d(coeffs)
-
-        # compute error on known points
-        y_pred = poly(x)
-        error = np.mean((y - y_pred) ** 2)
-
+        y_fit = poly(x)
+        error = np.mean((y - y_fit)**2)
+        
         if error < best_error:
             best_error = error
             best_degree = degree
             best_poly = poly
 
-    # Extrapolate using the best model
-    return best_poly(len(values)-1 + steps_ahead)
+    # Ensure best_poly is assigned
+    if best_poly is None:
+        # fallback to linear
+        coeffs = np.polyfit(x, y, 1)
+        best_poly = np.poly1d(coeffs)
+        best_degree = 1
+
+    y_target = best_poly(x_target)
+    return y_target, best_degree
+
 
 def find_latest_date(date_dict):
     """
-    Return the latest date from dictionary keys which can be
-    datetime objects or date strings.
-    Supports multiple common date formats.
+    Return the latest datetime from dictionary keys.
+    Keys can be datetime objects, date objects, or date/datetime strings.
+    Supports multiple common date/datetime formats.
     """
     if not date_dict:
         return None
 
-    # Known date formats to attempt
+    # Known date/datetime formats
     date_formats = [
         "%Y-%m-%d",
         "%Y/%m/%d",
         "%d-%m-%Y",
         "%d/%m/%Y",
         "%Y-%m-%d %H:%M:%S",
-        "%Y/%m/%d %H:%M:%S"
+        "%Y/%m/%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",  # ISO format
     ]
 
-    parsed_dates = []
+    parsed_datetimes = []
 
     for key in date_dict.keys():
         if isinstance(key, datetime):
-            parsed_dates.append(key)
+            parsed_datetimes.append(key)
+        elif isinstance(key, date):
+            # Convert date to datetime at midnight
+            parsed_datetimes.append(datetime.combine(key, datetime.min.time()))
         elif isinstance(key, str):
             parsed = None
             for fmt in date_formats:
@@ -828,25 +835,147 @@ def find_latest_date(date_dict):
                     continue
             if parsed is None:
                 raise ValueError(f"Unsupported date format: {key}")
-            parsed_dates.append(parsed)
+            parsed_datetimes.append(parsed)
         else:
             raise TypeError(f"Unsupported key type: {type(key)}")
 
-    return max(parsed_dates)
+    return max(parsed_datetimes)
+
 
 def Extrapolate_PUs_Number(LOT_PUs_Num_Comb, Selected_Date_4_Pred, Extrapolation_Window_Size=10):
     # This function takes a LOT code and its comb of values for the number of PUs for the last N days
     # and extrapolates the number of PUs in the Selected_Date_4_Pred
     # LOT_PUs_Num_Comb[date] = [a1, a2,...,aN]
     
-    values = [value for key, value in sorted(LOT_PUs_Num_Comb.items(), key=lambda x: x[0])]
-    # Compute the number of time units (days) between the Selected_Date_4_Pred and the last date in COMB
-    steps_ahead = int((Selected_Date_4_Pred - find_latest_date(LOT_PUs_Num_Comb)).total_seconds() / (24*3600))
+    try:
+        values = [value for key, value in sorted(LOT_PUs_Num_Comb.items(), key=lambda x: x[0])]
+        # Compute the number of time units (days) between the Selected_Date_4_Pred and the last date in COMB
+        # steps_ahead = int((Selected_Date_4_Pred - find_latest_date(LOT_PUs_Num_Comb)).total_seconds() / (24*3600))
 
-    if len(values) >= Extrapolation_Window_Size:
-        # Extrapolate according to COMB figures
-        return auto_extrapolate(values, steps_ahead)
-    else:
-        return sum(values) / len(values)
+        if len(values) >= Extrapolation_Window_Size:
+            # Extrapolate according to COMB figures
+            return auto_extrapolate(values, 1)
+        else:
+            return sum(values) / len(values)
+    except:
+        pass
 
     return None
+
+def Update_PUs_Time_Line(PU_Date_Time_Line, DATA, PU_Date_Field_Name='CHS Pickup Date'):
+    # This function updates the time line of date baskets that contain how many PUs were done for each date,
+    # This is done because a date file of raw samples, contains different dates and all not all PUs in the file
+    # were done on that day
+
+    try:
+        DATA[PU_Date_Field_Name] = pd.to_datetime(DATA[PU_Date_Field_Name])
+    except:
+        pass
+
+    DATA[PU_Date_Field_Name] = DATA[PU_Date_Field_Name].dt.date
+    DATA[PU_Date_Field_Name] = pd.to_datetime(DATA[PU_Date_Field_Name])
+
+    DATES_Unique = list(set(DATA[PU_Date_Field_Name]))
+
+    for DATE in DATES_Unique:
+        DATA_TEMP = DATA[DATA[PU_Date_Field_Name]==DATE]
+
+        try:
+            PU_Date_Time_Line[DATE] += len(DATA_TEMP)
+        except:
+            PU_Date_Time_Line[DATE] = len(DATA_TEMP)
+        
+    return PU_Date_Time_Line
+
+def Get_Dates_COMB_From_Dates_Timeline(PU_Date_Time_Line, target_datetime, Comb_Size):
+    """
+    Returns a dictionary of the last N datetime-value pairs before target_datetime,
+    with keys as datetime objects, sorted descending by datetime.
+
+    Parameters:
+    - PU_Date_Time_Line: dict with datetime keys and values
+    - target_datetime: datetime object
+    - Comb_Size: int, number of items to return
+    """
+    # Filter items strictly before target_datetime
+    filtered_items = [
+        (k, v) for k, v in PU_Date_Time_Line.items() if k < target_datetime
+    ]
+
+    # Sort by datetime descending (most recent first)
+    filtered_items.sort(key=lambda x: x[0], reverse=True)
+
+    # Take the first Comb_Size items
+    selected_items = filtered_items[:Comb_Size]
+
+    # Return as a dictionary
+    return dict(selected_items)
+
+def distance_to_closest(date, date_list):
+    """
+    Return the distance in days between a given date and the closest date in a list.
+
+    Parameters:
+        date (datetime): the date to compare
+        date_list (list of datetime): list of datetime objects to compare against
+
+    Returns:
+        int: distance in days to the closest date
+    """
+    if not date_list:
+        return None  # no dates to compare
+    
+    # Compute the absolute difference in days to each date
+    distances = [abs((date - d).days) for d in date_list]
+    
+    # Return the minimum distance
+    return min(distances)
+
+from datetime import datetime
+
+def map_dates_to_floats(dates):
+    """
+    Map a list of datetime objects to floats where:
+    - earliest date is 0
+    - each day difference is 1
+    
+    Parameters:
+        dates (list of datetime): list of datetime objects
+    
+    Returns:
+        list of float: mapped values
+    """
+    if not dates:
+        return []
+    
+    # Find the earliest date
+    min_date = min(dates)
+    
+    # Compute the difference in days as floats
+    mapped_values = [(d - min_date).days for d in dates]
+    
+    return mapped_values
+
+from datetime import datetime
+
+def get_previous_N_entries(data_dict, N, target_date):
+    """
+    Get the 10 dictionary entries with keys preceding target_date.
+
+    Parameters:
+        data_dict (dict): keys are datetime, values are any
+        target_date (datetime): reference date
+
+    Returns:
+        dict: sorted dictionary with up to 10 entries before target_date
+    """
+    # Filter keys that are before the target date
+    preceding_items = {k: v for k, v in data_dict.items() if k < target_date}
+    
+    # Sort by datetime ascending
+    sorted_items = dict(sorted(preceding_items.items(), key=lambda item: item[0]))
+    
+    # Take the last 10 items (closest 10 dates before target)
+    last_N_items = dict(list(sorted_items.items())[-N:])
+    
+    return last_N_items
