@@ -163,7 +163,7 @@ for file_index, filename in enumerate(FILENAMES):
 
         #endregion
 
-    if file_index>=10:
+    if file_index>=200:
         break
 
     # print(f'\nUpdating DAILY ACCUM REPORTS...')
