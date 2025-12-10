@@ -96,7 +96,7 @@ for file_index, filename in enumerate(FILENAMES):
     filename_date = Flexivan_Prediction_Package.extract_datetimes_from_filenames([filename])[0]     # There is only on date in list
     Next_Day = filename_date+timedelta(days=1)
 
-    print(pyfiglet.figlet_format(f'\nFile Index = {file_index}\n'))
+    print(pyfiglet.figlet_format(f'\nFile Date = {filename_date.date()}\n({file_index+1} out of {len(FILENAMES)})\n'))
 
     for return_lot in Ret_LOTs_Unique:
         #region Load data from CSV for each LOT separately
@@ -129,7 +129,7 @@ for file_index, filename in enumerate(FILENAMES):
         if DAILY_ACCUM_Reports_DICT[return_lot] is not None:
             Dates_From_Report = DAILY_ACCUM_Reports_DICT[return_lot].index
 
-            if return_lot=='LAXAIM':
+            if return_lot=='LAXAIM' and file_index>=20:
                 pass
 
             try:
@@ -160,12 +160,13 @@ for file_index, filename in enumerate(FILENAMES):
                     # Add to report
                     date_str_index = date.strftime("%Y-%m-%d")
                     DAILY_ACCUM_Reports_DICT[return_lot].loc[date_str_index, 'Predicted_Pickups'] = int(round(abs(PU_Num_Pred)))    # Regressor result (Float)
-
+                    
         #endregion
 
-    if file_index>=200:
+    if file_index>=140:
         break
 
+    #region Saving mid results - reports
     # print(f'\nUpdating DAILY ACCUM REPORTS...')
 
     # Successful_Reports = 0
@@ -178,6 +179,7 @@ for file_index, filename in enumerate(FILENAMES):
     #         print(Fore.RED + f'Daily report for {return_lot} is None' + Fore.RESET)
 
     # print(f'DONE - {Successful_Reports} out of {len(DAILY_ACCUM_Reports_DICT.keys())} reports updated successfully.')
+    #endregion
 
     #endregion
 
@@ -188,6 +190,12 @@ print(f'\nUpdating DAILY ACCUM REPORTS...')
 Successful_Reports = 0
 
 for return_lot in tqdm(DAILY_ACCUM_Reports_DICT.keys()):
+    # DAILY_ACCUM_Reports_DICT[return_lot] = DAILY_ACCUM_Reports_DICT[return_lot][DAILY_ACCUM_Reports_DICT[return_lot].index >= filename_date]
+    # try:
+    #     DAILY_ACCUM_Reports_DICT[return_lot].index = pd.to_datetime(DAILY_ACCUM_Reports_DICT[return_lot].index)
+    # except:
+    #     pass
+
     if DAILY_ACCUM_Reports_DICT[return_lot] is not None:
         DAILY_ACCUM_Reports_DICT[return_lot].to_csv(f'{Daily_ACCUM_Reports_Folder}/Daily_ACCUM_Report_{return_lot}_{filename_date.strftime("%Y-%m-%d")}.csv')
         Successful_Reports += 1

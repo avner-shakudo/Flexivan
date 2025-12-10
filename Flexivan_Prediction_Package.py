@@ -521,7 +521,7 @@ def Add_File_Results_2_ACCUM_Results_DF(DATA_ORIG, Results_File_ACCUM_DF, Detail
     # Results_File_ACCUM_DF - this is the daily report to maintain with ACCUM figure for returns and pickups
     # Detailed_Pred_Results_DF = [[y_pred], [y_test]], [Indexes_in_ORIG], [Predicted_LOT]]
 
-    if Results_File_ACCUM_DF is None:
+    if Results_File_ACCUM_DF is None or len(Results_File_ACCUM_DF)==0:
         Results_File_ACCUM_DF = pd.DataFrame(columns=['Date', 'Predicted_Pickups', 'Predicted_Returns'])
     
     #region Adding the RETURNS PREDICTION indormation into the ACCUM report
