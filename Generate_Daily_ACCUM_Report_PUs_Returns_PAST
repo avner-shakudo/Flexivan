@@ -30,7 +30,8 @@ Prediction_Step_Size = 1
 
 # Get filenames from folder
 print('Getting PAST raw data filenames...')
-DATA_Folder = './Daily prediction/DATA'
+# DATA_Folder = './Daily prediction/DATA'
+DATA_Folder = './inference_data_Oct_to_Dec_2025/'
 
 FILENAMES = [f for f in os.listdir(DATA_Folder) if os.path.isfile(os.path.join(DATA_Folder, f))]
 selected = "Latest_Test_"
@@ -78,7 +79,13 @@ PU_Moving_AVG_REP = {}
 PU_Date_Time_Line_DATES = {}
 PU_Date_Time_Line_VALUES = {}
 
+RET_Date_Time_Line_DATES = {}
+RET_Date_Time_Line_VALUES = {}
+
 print(pyfiglet.figlet_format("Building Reports..."))
+
+Step_Days = 1               # For the prediction time comb
+Dates_No = 14               # number of days to extrapolate
 
 start_time = time.time()
 
@@ -108,29 +115,69 @@ for file_index, filename in enumerate(FILENAMES):
 
         #region RETURN TIMES prediction
 
-        File_Analysis_Results_OBJ_TEMP = Flexivan_Prediction_Package.File_Analysis_Reults(f'{DATA_Folder}/TEMP_DATA_RETURN_PRED.CSV', Sorting_Field, Columns_2_Drop_From_Training)
-        File_Analysis_Results_OBJ_TEMP.Analyze_Data_File(Window_Size, Window_Step_Size, Error_THR, Test_Portion)
-        
-        # Handle the adding of the ACCUM predictions to the main results file (daily file)
-        try:
-            DAILY_ACCUM_Reports_DICT[return_lot]
-        except:
-            DAILY_ACCUM_Reports_DICT[return_lot] = None
+        # Dates_to_Extrapolate = DAILY_ACCUM_Reports_DICT[return_lot].index
+        Dates_to_Extrapolate = Flexivan_Prediction_Package.Generate_Consecutive_Dates(filename_date, Step_Days, Dates_No)
 
-        if File_Analysis_Results_OBJ_TEMP.Return_DIFF_RESULTS_DETAILED_DICT is not None:
-            DAILY_ACCUM_Reports_DICT[return_lot] = Flexivan_Prediction_Package.Add_File_Results_2_ACCUM_Results_DF(File_Analysis_Results_OBJ_TEMP.DATA_ORIG, DAILY_ACCUM_Reports_DICT[return_lot], File_Analysis_Results_OBJ_TEMP.Return_DIFF_RESULTS_DETAILED_DICT)
-        else:
-            pass
+        try:
+            PU_Date_Time_Line_DATES[return_lot]
+        except:
+            PU_Date_Time_Line_DATES[return_lot] = {}
+
+        PU_Date_Time_Line_DATES[return_lot] = Flexivan_Prediction_Package.Update_PUs_Time_Line(PU_Date_Time_Line_DATES[return_lot], DATA_Ret, 'CHS Return Dt')
+        
+        for date_index, date in enumerate(Dates_to_Extrapolate):
+            # print(f'Updating report date No.{date_index+1} out of {len(Dates_From_Report)} ({int(100*(date_index+1)/len(Dates_From_Report))}%)', end='\r')
+
+            try:
+                date = datetime.strptime(date, '%Y-%m-%d')
+            except:
+                pass
+                
+            PU_Date_Time_Line_DATES[return_lot] = dict(sorted(PU_Date_Time_Line_DATES[return_lot].items()))
+
+            TEMP_DATES_DICT = Flexivan_Prediction_Package.get_previous_N_entries(PU_Date_Time_Line_DATES[return_lot], 10, date)
+            DATES = list(TEMP_DATES_DICT.keys())
+
+            X_Values = Flexivan_Prediction_Package.map_dates_to_floats(DATES)
+            Y_Values = list(TEMP_DATES_DICT.values())
+
+            Steps_No = Flexivan_Prediction_Package.distance_to_closest(date, DATES)
+            
+            # Extrapolate
+            PU_Num_Pred, _ = Flexivan_Prediction_Package.extrapolate_value_auto_degree(X_Values, Y_Values, Steps_No)
+
+            if PU_Num_Pred is not None:
+                # Add to report
+                date_str_index = date.strftime("%Y-%m-%d")
+
+                try:
+                    DAILY_ACCUM_Reports_DICT[return_lot]
+                except:
+                    DAILY_ACCUM_Reports_DICT[return_lot] = pd.DataFrame(columns=['Date', 'Predicted_Pickups', 'Predicted_Returns'])
+
+                DAILY_ACCUM_Reports_DICT[return_lot].loc[date_str_index, 'Predicted_Returns'] = int(round(abs(PU_Num_Pred)))    # Regressor result (Float)
+
+        # File_Analysis_Results_OBJ_TEMP = Flexivan_Prediction_Package.File_Analysis_Reults(f'{DATA_Folder}/TEMP_DATA_RETURN_PRED.CSV', Sorting_Field, Columns_2_Drop_From_Training)
+        # File_Analysis_Results_OBJ_TEMP.Analyze_Data_File(Window_Size, Window_Step_Size, Error_THR, Test_Portion)
+        
+        # # Handle the adding of the ACCUM predictions to the main results file (daily file)
+        # try:
+        #     DAILY_ACCUM_Reports_DICT[return_lot]
+        # except:
+        #     DAILY_ACCUM_Reports_DICT[return_lot] = None
+
+        # if File_Analysis_Results_OBJ_TEMP.Return_DIFF_RESULTS_DETAILED_DICT is not None:
+        #     DAILY_ACCUM_Reports_DICT[return_lot] = Flexivan_Prediction_Package.Add_File_Results_2_ACCUM_Results_DF(File_Analysis_Results_OBJ_TEMP.DATA_ORIG, DAILY_ACCUM_Reports_DICT[return_lot], File_Analysis_Results_OBJ_TEMP.Return_DIFF_RESULTS_DETAILED_DICT)
+        # else:
+        #     pass
 
         #endregion
 
         #region PICKUPS NUMBER prediction
         
         if DAILY_ACCUM_Reports_DICT[return_lot] is not None:
-            Dates_From_Report = DAILY_ACCUM_Reports_DICT[return_lot].index
-
-            if return_lot=='LAXAIM' and file_index>=20:
-                pass
+            # Dates_to_Extrapolate = DAILY_ACCUM_Reports_DICT[return_lot].index
+            Dates_to_Extrapolate = Flexivan_Prediction_Package.Generate_Consecutive_Dates(filename_date, Step_Days, Dates_No)
 
             try:
                 PU_Date_Time_Line_DATES[return_lot]
@@ -139,10 +186,14 @@ for file_index, filename in enumerate(FILENAMES):
 
             PU_Date_Time_Line_DATES[return_lot] = Flexivan_Prediction_Package.Update_PUs_Time_Line(PU_Date_Time_Line_DATES[return_lot], DATA_Ret, 'CHS Pickup Date')
             
-            for date_index, date in enumerate(Dates_From_Report):
+            for date_index, date in enumerate(Dates_to_Extrapolate):
                 # print(f'Updating report date No.{date_index+1} out of {len(Dates_From_Report)} ({int(100*(date_index+1)/len(Dates_From_Report))}%)', end='\r')
 
-                date = datetime.strptime(date, '%Y-%m-%d')
+                try:
+                    date = datetime.strptime(date, '%Y-%m-%d')
+                except:
+                    pass
+
                 PU_Date_Time_Line_DATES[return_lot] = dict(sorted(PU_Date_Time_Line_DATES[return_lot].items()))
 
                 TEMP_DATES_DICT = Flexivan_Prediction_Package.get_previous_N_entries(PU_Date_Time_Line_DATES[return_lot], 10, date)
@@ -163,8 +214,8 @@ for file_index, filename in enumerate(FILENAMES):
                     
         #endregion
 
-    if file_index>=140:
-        break
+    # if file_index>=10:
+    #     break
 
     #region Saving mid results - reports
     # print(f'\nUpdating DAILY ACCUM REPORTS...')

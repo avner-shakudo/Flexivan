@@ -979,3 +979,13 @@ def get_previous_N_entries(data_dict, N, target_date):
     last_N_items = dict(list(sorted_items.items())[-N:])
     
     return last_N_items
+
+def Generate_Consecutive_Dates(Start_Date, Step_Days, Dates_No):
+    # This function takes a start date and generates Dates_No dates that are apart by Step_Days
+
+    DATES = []
+
+    for ii in range(Dates_No):
+        DATES.append(Start_Date + timedelta(days=(ii+1)*Step_Days))
+
+    return DATES
